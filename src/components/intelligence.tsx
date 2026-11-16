@@ -2,10 +2,11 @@
 import { useMemo, useState } from 'react';
 import { Sparkles, Users, TrendingUp, Target, Info, ArrowUpRight } from 'lucide-react';
 import type { Booking } from '@/lib/model';
-import { monthly, customers, ranked, anomalies, simulate, totals } from '@/lib/analytics';
+import { customers, ranked, anomalies, simulate, totals, forecastHistory } from '@/lib/analytics';
 import { forecast } from '@/lib/forecast';
 import { inr, D } from '@/lib/finance';
 import { journeyLabel } from '@/lib/journey';
+import { dateBasisLabel, type DateBasis } from '@/lib/report-dates';
 import { Card, Kpi, Badge, Empty, Field } from './ui';
 import { Bars } from './charts';
 export function Intelligence({
@@ -187,19 +188,21 @@ export function Intelligence({
     </>
   );
 }
-export function Forecasting({ bookings, today }: { bookings: Booking[]; today: string }) {
+export function Forecasting({
+  bookings,
+  today,
+  basis,
+  start,
+  end,
+}: {
+  bookings: Booking[];
+  today: string;
+  basis: DateBasis;
+  start: string;
+  end: string;
+}) {
   const [metric, setMetric] = useState<'revenue' | 'profit' | 'bookings'>('revenue');
-  const months = monthly(bookings).filter((m) => m.month < today.slice(0, 7));
-  // Include zero-activity complete months after the last booking; never use the partial current month.
-  if (months.length) {
-    const cursor = new Date(months.at(-1)!.month + '-01T00:00:00Z');
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-    while (cursor.toISOString().slice(0, 7) < today.slice(0, 7)) {
-      const month = cursor.toISOString().slice(0, 7);
-      months.push({ month, label: month, revenue: 0, cost: 0, profit: 0, bookings: 0 });
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-    }
-  }
+  const months = forecastHistory(bookings, basis, today, start, end);
   const activeMonths = months.filter((m) => m.bookings > 0).length;
   const bookingCount = months.reduce((n, m) => n + m.bookings, 0);
   const result =
@@ -213,7 +216,9 @@ export function Forecasting({ bookings, today }: { bookings: Booking[]; today: s
         </span>
         <div>
           <h3>A measured look ahead.</h3>
-          <p>Monthly booking-date totals. Complete calendar months only.</p>
+          <p>
+            Monthly totals by {dateBasisLabel[basis].toLowerCase()}. Complete calendar months only.
+          </p>
         </div>
         <select
           aria-label="Forecast metric"
@@ -267,10 +272,14 @@ export function Forecasting({ bookings, today }: { bookings: Booking[]; today: s
             >
               <Bars
                 data={result.future.map((value, i) => {
-                  const d = new Date(today.slice(0, 7) + '-01T00:00:00Z');
-                  d.setUTCMonth(d.getUTCMonth() + i);
+                  const d = new Date(months.at(-1)!.month + '-01T00:00:00Z');
+                  d.setUTCMonth(d.getUTCMonth() + i + 1);
                   return {
-                    name: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }),
+                    name: d.toLocaleDateString('en-IN', {
+                      month: 'short',
+                      year: '2-digit',
+                      timeZone: 'UTC',
+                    }),
                     value: Number(value.toFixed(2)),
                   };
                 })}

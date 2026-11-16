@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { businessLogo, reportHeader } = require('./branding.cjs');
 
 const BACKUP_TYPE = 'TravelIQ Offline backup';
 const MAX_BACKUP = 64 * 1024 * 1024;
@@ -166,6 +167,10 @@ function createStorage(profile) {
   );
   const load = () => select.all().map((row) => JSON.parse(row.payload));
   const getTicketFolder = () => getSetting.get('ticketFolder')?.value || '';
+  const getBranding = () => ({
+    reportHeader: reportHeader(getSetting.get('reportHeader')?.value || ''),
+    logo: getSetting.get('businessLogo')?.value || '',
+  });
   const replace = (bookings, rows) => {
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -190,6 +195,15 @@ function createStorage(profile) {
   return {
     load,
     getTicketFolder,
+    getBranding,
+    setBusinessLogo(value) {
+      setSetting.run('businessLogo', businessLogo(value));
+      return getBranding();
+    },
+    setReportHeader(value) {
+      setSetting.run('reportHeader', reportHeader(value));
+      return getBranding();
+    },
     backup,
     close: () => db.close(),
     setTicketFolder(folder) {
@@ -242,4 +256,4 @@ function createStorage(profile) {
   };
 }
 
-module.exports = { createStorage };
+module.exports = { createStorage, writeAtomically };

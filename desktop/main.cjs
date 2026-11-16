@@ -1,9 +1,22 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  dialog,
+  ipcMain,
+  nativeImage,
+  protocol,
+  session,
+} = require('electron');
 const { readFile } = require('node:fs/promises');
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
-const { createStorage } = require('./storage.cjs');
+const { createStorage, writeAtomically } = require('./storage.cjs');
+const { businessLogo } = require('./branding.cjs');
+const { makeBookingReport, pageFooter } = require('./report.cjs');
 
 const APP_URL = 'app://traveliq/';
+const reportDocuments = new Map();
 const CSP = [
   "default-src 'none'",
   "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
@@ -55,6 +68,19 @@ async function serve(request) {
   } catch {
     return new Response(null, { status: 400 });
   }
+  if (relative.startsWith('__report/')) {
+    const html = reportDocuments.get(relative);
+    if (!html) return new Response(null, { status: 404 });
+    return new Response(request.method === 'HEAD' ? null : html, {
+      headers: {
+        'Content-Type': MIME['.html'],
+        'Content-Security-Policy':
+          "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; frame-ancestors 'none'",
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  }
   const allowed = relative
     .split('/')
     .every((part) => /^[A-Za-z0-9_.()@\[\]-]+$/.test(part) && part !== '..' && part !== '.');
@@ -91,6 +117,73 @@ protocol.registerSchemesAsPrivileged([
 
 let window;
 let storage;
+let exportInProgress = false;
+
+function grayscaleLogo(value) {
+  if (!value) return '';
+  const image = nativeImage.createFromDataURL(businessLogo(value));
+  if (image.isEmpty()) throw Error('Choose a valid PNG or JPEG logo in Settings.');
+  // Electron returns native premultiplied BGRA. Preserve transparency in the print logo.
+  const bitmap = image.toBitmap();
+  for (let i = 0; i < bitmap.length; i += 4) {
+    const gray = Math.round(0.0722 * bitmap[i] + 0.7152 * bitmap[i + 1] + 0.2126 * bitmap[i + 2]);
+    bitmap[i] = bitmap[i + 1] = bitmap[i + 2] = gray;
+  }
+  return nativeImage.createFromBitmap(bitmap, image.getSize()).toDataURL();
+}
+
+async function exportBookingPdf(request) {
+  if (exportInProgress) return false;
+  exportInProgress = true;
+  let printer;
+  const route = '__report/' + randomUUID();
+  try {
+    const branding = storage.getBranding();
+    const html = makeBookingReport(request, { ...branding, logo: grayscaleLogo(branding.logo) });
+    const pick = await dialog.showSaveDialog(window, {
+      title: 'Save booking report PDF',
+      defaultPath: 'TravelIQ-booking-report.pdf',
+      filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+    });
+    if (pick.canceled || !pick.filePath) return false;
+    if (!/\.pdf$/i.test(pick.filePath)) throw Error('Choose a filename ending in .pdf.');
+    printer = new BrowserWindow({
+      show: false,
+      parent: window,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+      },
+    });
+    printer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    printer.webContents.on('will-navigate', (event) => event.preventDefault());
+    reportDocuments.set(route, html);
+    try {
+      await printer.loadURL(APP_URL + route);
+      const pdf = await printer.webContents.printToPDF({
+        pageSize: 'A4',
+        landscape: false,
+        printBackground: false,
+        preferCSSPageSize: true,
+        displayHeaderFooter: true,
+        headerTemplate: '<span></span>',
+        footerTemplate: pageFooter,
+        margins: { top: 0.45, bottom: 0.64, left: 0.45, right: 0.45 },
+      });
+      writeAtomically(pick.filePath, pdf);
+      return true;
+    } catch {
+      throw Error('The PDF could not be saved. Choose a writable folder and try again.');
+    }
+  } finally {
+    reportDocuments.delete(route);
+    if (printer && !printer.isDestroyed()) printer.destroy();
+    exportInProgress = false;
+  }
+}
+
 function registerIPC() {
   function register(name, callback, fallback) {
     ipcMain.handle(`traveliq:${name}`, async (event, ...args) => {
@@ -115,6 +208,10 @@ function registerIPC() {
     });
   }
   register('load', () => storage.load(), 'Bookings could not be loaded from this computer.');
+  register('getBranding', () => storage.getBranding());
+  register('setReportHeader', (value) => storage.setReportHeader(value));
+  register('setBusinessLogo', (value) => storage.setBusinessLogo(value));
+  register('exportBookingPdf', exportBookingPdf);
   register('save', (bookings, ticket) => {
     try {
       storage.save(bookings, ticket);

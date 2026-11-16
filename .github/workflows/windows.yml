@@ -3,7 +3,7 @@ name: Windows installer
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/windows.yml]
+    paths: [.github/workflows/windows.yml, package.json]
   workflow_dispatch:
 
 permissions:
@@ -64,5 +64,5 @@ jobs:
           $checksum = Get-Item ("installer/" + $installer.BaseName + ".sha256")
           gh release view $tag --repo $env:RELEASE_REPO --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) { Write-Output "Release $tag already exists; leaving it unchanged."; exit 0 }
-          gh release create $tag $installer.FullName $checksum.FullName --repo $env:RELEASE_REPO --target $env:RELEASE_COMMIT --title "TravelIQ Offline $tag for Windows" --notes "Windows x64 installer. SQLite is bundled and the workspace starts empty. The app runs offline. Choose the ticket PDF folder in Settings. The installer is unsigned."
+          gh release create $tag $installer.FullName $checksum.FullName --repo $env:RELEASE_REPO --target $env:RELEASE_COMMIT --title "TravelIQ Offline $tag for Windows" --notes "Windows x64 installer with grayscale A4 booking PDF exports, optional business logo and report header, and a shared Booked date / Departure date filter. PDF is the default; CSV remains available. This installer is unsigned. Close the app, then install the new version over the existing copy to keep your local records."
           exit $LASTEXITCODE

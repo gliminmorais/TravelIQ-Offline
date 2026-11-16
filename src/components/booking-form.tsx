@@ -205,7 +205,7 @@ export function BookingForm({
                 onChange={(e) => update('pnr', e.target.value.toUpperCase())}
               />
             </Field>
-            <Field label="Booking date">
+            <Field label="Booked date">
               <input
                 type="date"
                 value={form.bookedOn}

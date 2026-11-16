@@ -13,4 +13,8 @@ contextBridge.exposeInMainWorld('travelIQDesktop', {
   chooseTicketFolder: () => call('chooseTicketFolder'),
   backup: () => call('backup'),
   restore: () => call('restore'),
+  getBranding: () => call('getBranding'),
+  setReportHeader: (value) => call('setReportHeader', value),
+  setBusinessLogo: (value) => call('setBusinessLogo', value),
+  exportBookingPdf: (request) => call('exportBookingPdf', request),
 });

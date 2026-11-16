@@ -69,6 +69,22 @@ test('fresh database is empty; bookings and folder survive a restart', (t) => {
   assert.equal(f.db.getTicketFolder(), f.disk);
 });
 
+test('report branding survives database reopen and can be reset without touching bookings', (t) => {
+  const f = fixture(t);
+  const logo =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aR8sAAAAASUVORK5CYII=';
+  assert.deepEqual(f.db.getBranding(), { reportHeader: 'TRAVELIQ OFFLINE / REPORTS', logo: '' });
+  f.db.save([booking]);
+  f.db.setReportHeader('  My & Co Travel  ');
+  f.db.setBusinessLogo(logo);
+  assert.deepEqual(f.reopen().getBranding(), { reportHeader: 'My & Co Travel', logo });
+  assert.throws(() => f.db.setBusinessLogo('data:image/svg+xml,<svg onload="alert(1)"/>'), /PNG/i);
+  f.db.setReportHeader('');
+  f.db.setBusinessLogo('');
+  assert.deepEqual(f.db.getBranding(), { reportHeader: 'TRAVELIQ OFFLINE / REPORTS', logo: '' });
+  assert.deepEqual(f.db.load(), [booking]);
+});
+
 test('ticket copies go to the chosen folder; deleting bookings leaves archived PDFs in place', (t) => {
   const f = fixture(t);
   assert.throws(() => f.db.save([booking], ticket()), /choose a folder/i);

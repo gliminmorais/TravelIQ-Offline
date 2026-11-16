@@ -1,6 +1,26 @@
 import type { Booking } from './model';
+import type { DateBasis } from './report-dates';
 
 type Ticket = { bytes: ArrayBuffer };
+export type BrandingSettings = { reportHeader: string; logo: string };
+export const defaultBranding: BrandingSettings = {
+  reportHeader: 'TRAVELIQ OFFLINE / REPORTS',
+  logo: '',
+};
+export type BookingReportRequest = {
+  basis: DateBasis;
+  start: string;
+  end: string;
+  rows: {
+    customer: string;
+    bookedOn: string;
+    departure: string;
+    airline: string;
+    charge: string;
+    profit: string;
+    outstanding: string;
+  }[];
+};
 
 type TravelIQDesktop = {
   load: () => Promise<Booking[]>;
@@ -9,6 +29,10 @@ type TravelIQDesktop = {
   chooseTicketFolder: () => Promise<string>;
   backup: () => Promise<boolean>;
   restore: () => Promise<boolean>;
+  getBranding: () => Promise<BrandingSettings>;
+  setReportHeader: (value: string) => Promise<BrandingSettings>;
+  setBusinessLogo: (dataUrl: string) => Promise<BrandingSettings>;
+  exportBookingPdf: (request: BookingReportRequest) => Promise<boolean>;
 };
 
 declare global {

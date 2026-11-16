@@ -1,4 +1,5 @@
 'use client';
+import Image from 'next/image';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Plane,
@@ -36,14 +37,24 @@ import { Toaster, toast } from 'sonner';
 import type { Booking, Transaction } from '@/lib/model';
 import type { BookingInput } from '@/lib/validation';
 import { transactionSchema } from '@/lib/validation';
-import { desktop } from '@/lib/desktop';
+import { defaultBranding, desktop } from '@/lib/desktop';
 import { financials, inr, csv, D, validateTransaction } from '@/lib/finance';
 import { totals, monthly, ranked, customers } from '@/lib/analytics';
 import { journeyRoute } from '@/lib/journey';
+import {
+  dateBasisLabel,
+  dateInRange,
+  localDay,
+  nextDeparture,
+  reportDay,
+  validRangeDay,
+  type DateBasis,
+} from '@/lib/report-dates';
 import { BookingForm } from './booking-form';
 import { Card, Kpi, Badge, Modal, Field, Empty } from './ui';
 import { TrendChart } from './charts';
 import { Intelligence, Forecasting, Simulator } from './intelligence';
+import { ReportAppearance } from './report-appearance';
 const navigation = [
   { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
   { id: 'bookings', label: 'Bookings', icon: Ticket },
@@ -91,15 +102,11 @@ function dateLabel(v: string) {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
+    timeZone: 'UTC',
   });
 }
-function localToday() {
-  const date = new Date();
-  const two = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
-}
 export function Workspace() {
-  const today = localToday();
+  const today = localDay();
   const [view, setView] = useState('dashboard'),
     [bookings, setBookings] = useState<Booking[]>([]),
     [loading, setLoading] = useState(true),
@@ -112,7 +119,10 @@ export function Workspace() {
     [status, setStatus] = useState('all'),
     [airline, setAirline] = useState('all'),
     [destination, setDestination] = useState('all'),
-    [basis, setBasis] = useState<'booking' | 'departure'>('booking'),
+    [basis, setBasis] = useState<DateBasis>('booking'),
+    [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf'),
+    [exporting, setExporting] = useState(false),
+    [branding, setBranding] = useState(defaultBranding),
     [filterOpen, setFilterOpen] = useState(false),
     [form, setForm] = useState<{
       existing?: Booking;
@@ -139,8 +149,14 @@ export function Workspace() {
     setLoadError('');
     try {
       const bridge = desktop();
-      setBookings(await bridge.load());
-      setTicketFolder(await bridge.getTicketFolder());
+      const [records, folder, appearance] = await Promise.all([
+        bridge.load(),
+        bridge.getTicketFolder(),
+        bridge.getBranding(),
+      ]);
+      setBookings(records);
+      setTicketFolder(folder);
+      setBranding(appearance);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Could not load records');
     } finally {
@@ -199,10 +215,8 @@ export function Workspace() {
   const filtered = useMemo(
     () =>
       reportBookings.filter((b) => {
-        const day = basis === 'booking' ? b.bookedOn : b.segments[0]?.departure.slice(0, 10) || '';
         return (
-          (!start || day >= start) &&
-          (!end || day <= end) &&
+          dateInRange(reportDay(b, basis), start, end) &&
           (status === 'all' || b.status === status) &&
           (airline === 'all' || b.segments.some((s) => s.airline === airline)) &&
           (destination === 'all' || journeyRoute(b).destination === destination) &&
@@ -220,7 +234,7 @@ export function Workspace() {
       }),
     [reportBookings, basis, start, end, status, airline, destination, query],
   );
-  const active = filtered.filter((b) => !b.archived),
+  const active = filtered,
     summary = totals(filtered),
     trend = monthly(filtered, basis).slice(-12),
     destinations = ranked(filtered, (b) => journeyRoute(b).destination || '—').sort(
@@ -228,14 +242,21 @@ export function Workspace() {
     ),
     allCustomers = customers(reportBookings, today),
     visibleCustomers = customers(filtered, today),
-    upcoming = bookings
-      .filter(
-        (b) =>
-          !b.archived &&
-          b.status === 'confirmed' &&
-          b.segments.some((s) => s.departure.slice(0, 10) >= today),
-      )
-      .sort((a, b) => a.segments[0].departure.localeCompare(b.segments[0].departure));
+    upcoming = filtered
+      .flatMap((booking) => {
+        if (booking.status !== 'confirmed') return [];
+        const segment = nextDeparture(booking, today);
+        return segment
+          ? [
+              {
+                booking,
+                segment,
+                route: segment === booking.segments[0] ? journeyRoute(booking) : segment,
+              },
+            ]
+          : [];
+      })
+      .sort((a, b) => a.segment.departure.localeCompare(b.segment.departure));
   const sorted = [...active].sort((a, b) =>
     sort === 'name'
       ? a.customerName.localeCompare(b.customerName)
@@ -243,7 +264,9 @@ export function Workspace() {
         ? financials(b).revenue.comparedTo(financials(a).revenue)
         : sort === 'departure'
           ? (a.segments[0]?.departure || '').localeCompare(b.segments[0]?.departure || '')
-          : b.bookedOn.localeCompare(a.bookedOn),
+          : reportDay(b, sort === 'booked' ? 'booking' : basis).localeCompare(
+              reportDay(a, sort === 'booked' ? 'booking' : basis),
+            ),
   );
   async function save(data: BookingInput, id?: string, file?: File) {
     if (file && !ticketFolder) {
@@ -274,11 +297,40 @@ export function Workspace() {
       file ? 'Booking and ticket PDF saved' : id ? 'Booking updated' : 'Booking created',
     );
   }
-  function exportRows() {
+  async function exportRows() {
+    if (!sorted.length || exporting) return;
+    if (exportFormat === 'pdf') {
+      setExporting(true);
+      try {
+        const saved = await desktop().exportBookingPdf({
+          basis,
+          start,
+          end,
+          rows: sorted.map((booking) => {
+            const f = financials(booking);
+            return {
+              customer: booking.customerName,
+              bookedOn: booking.bookedOn,
+              departure: reportDay(booking, 'departure'),
+              airline: booking.segments[0]?.airline || '',
+              charge: f.revenue.toFixed(2),
+              profit: f.profit.toFixed(2),
+              outstanding: f.outstanding.toFixed(2),
+            };
+          }),
+        });
+        if (saved) toast.success('Booking report PDF saved');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not save the PDF.');
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
     download(
       'traveliq-bookings.csv',
       csv(
-        filtered.map((b) => {
+        sorted.map((b) => {
           const f = financials(b);
           return {
             booking_id: b.id,
@@ -349,6 +401,13 @@ export function Workspace() {
               </button>
             </th>
             <th>Route / airline</th>
+            {!compact && (
+              <th>
+                <button className="table-sort" onClick={() => setSort('booked')}>
+                  Booked date
+                </button>
+              </th>
+            )}
             <th>
               <button className="table-sort" onClick={() => setSort('departure')}>
                 Departure
@@ -402,6 +461,7 @@ export function Workspace() {
                   {route.via.length > 0 && <small>via {route.via.join(' · ')}</small>}
                   {route.hasMoreJourneys && <small>Return / additional journey included</small>}
                 </td>
+                {!compact && <td>{dateLabel(b.bookedOn)}</td>}
                 <td>
                   {s ? dateLabel(s.departure) : '—'}
                   <small>{s?.departure.slice(11)} local</small>
@@ -463,9 +523,20 @@ export function Workspace() {
           aria-label="TravelIQ home"
           onClick={() => navigate('dashboard')}
         >
-          <span className="brand-mark">
-            <Plane size={23} />
-          </span>
+          {branding.logo ? (
+            <Image
+              unoptimized
+              src={branding.logo}
+              width={43}
+              height={35}
+              alt=""
+              className="sidebar-logo"
+            />
+          ) : (
+            <span className="brand-mark">
+              <Plane size={23} />
+            </span>
+          )}
           Travel<span>IQ</span>
           <span className="brand-dot" />
         </button>
@@ -572,26 +643,37 @@ export function Workspace() {
               </button>
             </div>
           </div>
-          {['dashboard', 'bookings', 'customers', 'financials', 'analytics'].includes(view) && (
+          {[
+            'dashboard',
+            'bookings',
+            'customers',
+            'financials',
+            'analytics',
+            'forecasting',
+          ].includes(view) && (
             <>
               <div className="filter-bar">
                 <div className="date-filter">
                   <CalendarDays size={16} />
                   <input
-                    aria-label="Start date"
+                    aria-label={`Start date (${dateBasisLabel[basis]})`}
                     type="date"
+                    max="9999-12-31"
                     value={start}
                     onChange={(e) => {
+                      if (!validRangeDay(e.target.value)) return;
                       setStart(e.target.value);
                       setPage(1);
                     }}
                   />
                   <span>—</span>
                   <input
-                    aria-label="End date"
+                    aria-label={`End date (${dateBasisLabel[basis]})`}
                     type="date"
+                    max="9999-12-31"
                     value={end}
                     onChange={(e) => {
+                      if (!validRangeDay(e.target.value)) return;
                       setEnd(e.target.value);
                       setPage(1);
                     }}
@@ -600,10 +682,14 @@ export function Workspace() {
                 <select
                   aria-label="Reporting date basis"
                   value={basis}
-                  onChange={(e) => setBasis(e.target.value as typeof basis)}
+                  onChange={(e) => {
+                    setBasis(e.target.value as DateBasis);
+                    setSort('date');
+                    setPage(1);
+                  }}
                 >
-                  <option value="booking">Booking date</option>
-                  <option value="departure">Departure date</option>
+                  <option value="booking">{dateBasisLabel.booking}</option>
+                  <option value="departure">{dateBasisLabel.departure}</option>
                 </select>
                 <button
                   className={filterOpen ? 'selected-button' : ''}
@@ -613,10 +699,25 @@ export function Workspace() {
                   Filters
                   {status !== 'all' || airline !== 'all' || destination !== 'all' ? ' •' : ''}
                 </button>
-                <button className="export-button" onClick={exportRows} disabled={!filtered.length}>
-                  <Download size={15} />
-                  Export CSV
-                </button>
+                <div className="export-controls">
+                  <button
+                    type="button"
+                    onClick={() => void exportRows()}
+                    disabled={!filtered.length || exporting || loading || !!loadError}
+                  >
+                    <Download size={15} />
+                    {exporting ? 'Saving PDF…' : `Export ${exportFormat.toUpperCase()}`}
+                  </button>
+                  <select
+                    aria-label="Export format"
+                    value={exportFormat}
+                    disabled={exporting}
+                    onChange={(e) => setExportFormat(e.target.value === 'csv' ? 'csv' : 'pdf')}
+                  >
+                    <option value="pdf">PDF</option>
+                    <option value="csv">CSV</option>
+                  </select>
+                </div>
               </div>
               {filterOpen && (
                 <div className="expanded-filters">
@@ -734,7 +835,7 @@ export function Workspace() {
                   <div className="dashboard-charts">
                     <Card
                       title="Business performance"
-                      subtitle={`Revenue & gross profit · ${basis} date · last 12 displayed months`}
+                      subtitle={`Revenue & gross profit · ${dateBasisLabel[basis]} · last 12 displayed months`}
                       action={
                         <div className="chart-key">
                           <span>Revenue</span>
@@ -817,28 +918,28 @@ export function Workspace() {
                     </Card>
                     <Card
                       title="Taking off soon"
-                      subtitle={`${upcoming.length} upcoming confirmed journeys · all dates`}
+                      subtitle={`${upcoming.length} upcoming confirmed journeys · selected bookings`}
                     >
                       <div className="journey-list">
-                        {upcoming.slice(0, 3).map((b) => (
-                          <button key={b.id} onClick={() => setSelected(b.id)}>
+                        {upcoming.slice(0, 3).map(({ booking, segment, route }) => (
+                          <button key={booking.id} onClick={() => setSelected(booking.id)}>
                             <span className="journey-date">
-                              <strong>{b.segments[0].departure.slice(8, 10)}</strong>
+                              <strong>{segment.departure.slice(8, 10)}</strong>
                               <small>
-                                {new Date(b.segments[0].departure).toLocaleDateString('en-IN', {
+                                {new Date(segment.departure).toLocaleDateString('en-IN', {
                                   month: 'short',
                                 })}
                               </small>
                             </span>
                             <span>
                               <strong>
-                                {journeyRoute(b).origin}
+                                {route.origin}
                                 <span> → </span>
-                                {journeyRoute(b).destination}
+                                {route.destination}
                               </strong>
-                              <small>{b.customerName}</small>
+                              <small>{booking.customerName}</small>
                               <small>
-                                {b.segments[0].flightNumber} · {b.segments[0].departure.slice(11)}
+                                {segment.flightNumber} · {segment.departure.slice(11)}
                               </small>
                             </span>
                             <Plane size={17} />
@@ -882,7 +983,11 @@ export function Workspace() {
                   <div className="pagination">
                     <span>
                       Page {page} of {Math.max(1, Math.ceil(sorted.length / 20))} · sorted by{' '}
-                      {sort === 'date' ? 'booking date' : sort}
+                      {sort === 'date'
+                        ? dateBasisLabel[basis].toLowerCase()
+                        : sort === 'booked'
+                          ? 'booked date'
+                          : sort}
                     </span>
                     <div>
                       <button disabled={page <= 1} onClick={() => setPage(page - 1)}>
@@ -1029,6 +1134,7 @@ export function Workspace() {
                         <thead>
                           <tr>
                             <th>Booking / customer</th>
+                            <th>{dateBasisLabel[basis]}</th>
                             <th>Revenue</th>
                             <th>Agency cost</th>
                             <th>Gross profit</th>
@@ -1039,7 +1145,7 @@ export function Workspace() {
                         </thead>
                         <tbody>
                           {[...filtered]
-                            .sort((a, b) => b.bookedOn.localeCompare(a.bookedOn))
+                            .sort((a, b) => reportDay(b, basis).localeCompare(reportDay(a, basis)))
                             .slice(0, 50)
                             .map((b) => {
                               const f = financials(b);
@@ -1053,6 +1159,9 @@ export function Workspace() {
                                       {b.pnr || b.id.slice(0, 8)}
                                     </button>
                                     <small>{b.customerName}</small>
+                                  </td>
+                                  <td>
+                                    {reportDay(b, basis) ? dateLabel(reportDay(b, basis)) : '—'}
                                   </td>
                                   <td>{inr(f.revenue)}</td>
                                   <td>{inr(f.cost)}</td>
@@ -1092,7 +1201,15 @@ export function Workspace() {
                   onSelect={(b) => setSelected(b.id)}
                 />
               )}
-              {view === 'forecasting' && <Forecasting bookings={reportBookings} today={today} />}
+              {view === 'forecasting' && (
+                <Forecasting
+                  bookings={filtered}
+                  today={today}
+                  basis={basis}
+                  start={start}
+                  end={end}
+                />
+              )}
               {view === 'simulator' && <Simulator />}
               {view === 'documents' && (
                 <Card title="Import a ticket" subtitle="Review and save a local PDF copy">
@@ -1166,6 +1283,7 @@ export function Workspace() {
                       </div>
                     </Card>
                   </div>
+                  <ReportAppearance branding={branding} onSave={setBranding} />
                   <Card title="Booking backups" subtitle="Keep a spare copy on a separate drive">
                     <div className="setting-row">
                       <div>
@@ -1383,7 +1501,7 @@ export function Workspace() {
         <Modal
           wide
           title={allCustomers.find((c) => c.id === customer)?.name || 'Customer'}
-          description="Complete customer history across all dates"
+          description={`Bookings matching the current ${dateBasisLabel[basis].toLowerCase()} filter`}
           onClose={() => setCustomer(null)}
         >
           <div className="detail-body">
@@ -1394,9 +1512,9 @@ export function Workspace() {
               {allCustomers.find((c) => c.id === customer)?.email || 'No email recorded'}
             </div>
             {bookingTable(
-              bookings
+              filtered
                 .filter((b) => b.customerId === customer)
-                .sort((a, b) => b.bookedOn.localeCompare(a.bookedOn)),
+                .sort((a, b) => reportDay(b, basis).localeCompare(reportDay(a, basis))),
               true,
             )}
           </div>

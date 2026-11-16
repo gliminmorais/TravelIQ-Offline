@@ -236,6 +236,14 @@ button.brand {
   margin-right: 9px;
   transform: rotate(-3deg);
 }
+.sidebar-logo {
+  flex: 0 0 43px;
+  object-fit: contain;
+  margin-right: 9px;
+  padding: 2px;
+  border-radius: 6px;
+  background: #fff;
+}
 .brand-dot {
   width: 5px;
   height: 5px;
@@ -541,8 +549,19 @@ main {
   height: 38px;
   font-size: 11px;
 }
-.export-button {
+.export-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
   margin-left: auto;
+}
+.export-controls button {
+  white-space: nowrap;
+}
+.export-controls select {
+  width: 73px;
+  min-height: 38px;
+  font-size: 11px;
 }
 .selected-button {
   color: var(--blue);
@@ -1212,6 +1231,33 @@ td small {
 .setting-row small {
   font-size: 10px;
   margin-top: 5px;
+}
+.report-setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.report-header-row {
+  align-items: end;
+}
+.report-header-row > div {
+  width: min(100%, 520px);
+}
+.report-header-row input {
+  width: 100%;
+}
+.report-header-row button {
+  flex-shrink: 0;
+}
+.settings-logo {
+  display: block;
+  object-fit: contain;
+  margin-top: 10px;
+  padding: 5px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #fff;
 }
 .ticket-folder-value {
   min-width: 0;

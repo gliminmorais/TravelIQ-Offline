@@ -1,6 +1,14 @@
 import type { Booking } from './model';
 import { financials, sum, D } from './finance';
 import { journeyLabel } from './journey';
+import {
+  completeThrough,
+  dateInRange,
+  firstCompleteMonth,
+  reportDay,
+  validRangeDay,
+  type DateBasis,
+} from './report-dates';
 export function totals(bookings: Booking[]) {
   const f = bookings.map(financials),
     revenue = sum(f.map((x) => x.revenue)),
@@ -17,10 +25,7 @@ export function totals(bookings: Booking[]) {
     credit: sum(f.map((x) => x.credit)),
   };
 }
-export function monthly(
-  bookings: Booking[],
-  basis: 'booking' | 'departure' | 'payment' = 'booking',
-) {
+export function monthly(bookings: Booking[], basis: DateBasis | 'payment' = 'booking') {
   const groups = new Map<
     string,
     { revenue: ReturnType<typeof D>; cost: ReturnType<typeof D>; bookings: number }
@@ -34,9 +39,9 @@ export function monthly(
         groups.set(month, g);
       }
     } else {
-      const month = (
-          basis === 'booking' ? b.bookedOn : b.segments[0]?.departure || b.bookedOn
-        ).slice(0, 7),
+      const date = reportDay(b, basis);
+      if (!date) continue;
+      const month = date.slice(0, 7),
         f = financials(b),
         g = groups.get(month) || { revenue: D(0), cost: D(0), bookings: 0 };
       g.revenue = g.revenue.plus(f.revenue);
@@ -65,6 +70,32 @@ export function monthly(
     start.setUTCMonth(start.getUTCMonth() + 1);
   }
   return result;
+}
+
+export function forecastHistory(
+  bookings: Booking[],
+  basis: DateBasis,
+  today: string,
+  start: string,
+  end: string,
+) {
+  if (!validRangeDay(start) || !validRangeDay(end) || (start && start >= today.slice(0, 7) + '-01'))
+    return [];
+  const first = firstCompleteMonth(start);
+  const last = completeThrough(today, end);
+  const months = monthly(
+    bookings.filter((booking) => dateInRange(reportDay(booking, basis), start, end)),
+    basis,
+  ).filter((m) => m.month >= first && m.month <= last);
+  if (!months.length) return months;
+  const cursor = new Date(months.at(-1)!.month + '-01T00:00:00Z');
+  cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  while (months.length < 1200 && cursor.toISOString().slice(0, 7) <= last) {
+    const month = cursor.toISOString().slice(0, 7);
+    months.push({ month, label: month, revenue: 0, cost: 0, profit: 0, bookings: 0 });
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return months;
 }
 export function ranked(bookings: Booking[], key: (b: Booking) => string) {
   const groups = new Map<string, Booking[]>();
