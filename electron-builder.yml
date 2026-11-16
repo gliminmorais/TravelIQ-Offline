@@ -14,7 +14,6 @@ win:
   target: nsis
   signAndEditExecutable: false
 nsis:
-  include: build/installer.nsh
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

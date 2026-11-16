@@ -1,6 +1,6 @@
 {
   "name": "traveliq-offline",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Offline Windows workspace for TravelIQ bookings and ticket PDFs",
   "author": "TravelIQ",
