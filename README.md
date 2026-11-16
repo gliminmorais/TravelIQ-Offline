@@ -1,9 +1,9 @@
 # TravelIQ Offline
 
-A private Windows desktop edition of TravelIQ. Bookings, finances, PDF import, reports, and CSV export run locally without a server, an internet connection, or a login. New installations start with an empty workspace.
+A Windows desktop edition of TravelIQ. Bookings, finances, PDF import, reports, and CSV export run locally without a server, an internet connection, or a login. New installations start with an empty workspace.
 
 - [Install and choose a ticket folder](INSTALL.md)
-- [Private release downloads](https://github.com/gliminmorais/TravelIQ-Offline/releases)
+- [Download the Windows installer](https://github.com/gliminmorais/TravelIQ-Offline/releases/latest)
 
 The app keeps its SQLite database on the computer. Imported PDFs are copied separately to the folder selected in Settings. Bookings and reports remain available if you move the PDFs or disconnect the drive. Folder changes apply to future copies. Save a booking backup from Settings and back up the PDF folder separately. A restore saves a safety copy of current bookings first.
 
