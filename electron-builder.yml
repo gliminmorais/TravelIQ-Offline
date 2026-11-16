@@ -1,0 +1,22 @@
+appId: com.traveliq.offline
+productName: TravelIQ Offline
+artifactName: TravelIQ-Offline-Setup-${version}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - desktop/**/*.cjs
+  - '!desktop/**/*.test.cjs'
+  - out/**/*
+  - '!out/samples{,/**/*}'
+  - '!out/reports/pdf-evaluation.json'
+  - '!node_modules{,/**/*}'
+win:
+  target: nsis
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: TravelIQ Offline
+  deleteAppDataOnUninstall: false
