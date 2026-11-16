@@ -1,10 +1,16 @@
 name: Windows installer
 
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/windows.yml]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: windows-release
 
 jobs:
   windows:
@@ -19,8 +25,44 @@ jobs:
       - run: npm test
       - run: npm run test:desktop
       - run: npm run dist:win
+      - name: Write checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item 'release/TravelIQ-Offline-Setup-*-x64.exe'
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Encoding ascii -LiteralPath ($installer.FullName -replace '\.exe$', '.sha256')
       - uses: actions/upload-artifact@v4
         with:
           name: TravelIQ-Offline-Windows-x64
-          path: release/TravelIQ-Offline-Setup-*-x64.exe
+          path: |
+            release/TravelIQ-Offline-Setup-*-x64.exe
+            release/TravelIQ-Offline-Setup-*-x64.sha256
           if-no-files-found: error
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.repository == 'gliminmorais/TravelIQ-Offline'
+    needs: windows
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TravelIQ-Offline-Windows-x64
+          path: installer
+      - name: Publish private release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-Item 'installer/TravelIQ-Offline-Setup-*-x64.exe'
+          if ($installer.Name -notmatch '^TravelIQ-Offline-Setup-(\d+\.\d+\.\d+)-x64\.exe$') { throw 'Invalid installer name' }
+          $tag = "v$($Matches[1])"
+          $checksum = Get-Item ("installer/" + $installer.BaseName + ".sha256")
+          gh release view $tag --repo $env:RELEASE_REPO --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Output "Release $tag already exists; leaving it unchanged."; exit 0 }
+          gh release create $tag $installer.FullName $checksum.FullName --repo $env:RELEASE_REPO --target $env:RELEASE_COMMIT --title "TravelIQ Offline $tag for Windows" --notes "Windows x64 installer. SQLite is bundled and the workspace starts empty. The app runs offline. Choose the ticket PDF folder in Settings. The installer is unsigned."
+          exit $LASTEXITCODE
