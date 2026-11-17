@@ -5,7 +5,7 @@ A Windows desktop edition of TravelIQ. Bookings, finances, PDF import, reports, 
 - [Install and choose a ticket folder](INSTALL.md)
 - [Download the Windows installer](https://github.com/gliminmorais/TravelIQ-Offline/releases/latest)
 
-The app keeps its SQLite database on the computer. Imported PDFs are copied separately to the folder selected in Settings. Bookings and reports remain available if you move the PDFs or disconnect the drive. Folder changes apply to future copies. Save a booking backup from Settings and back up the PDF folder separately. A restore saves a safety copy of current bookings first.
+The app keeps its SQLite database on the computer. Imported PDFs are copied separately to the folder selected in Settings as `YYYY\Month\DD\Customer Name_1.pdf`, using the booked date and a sequence for each customer in that day's folder. Bookings and reports remain available if you move the PDFs or disconnect the drive. Folder changes apply to future copies. Save a booking backup from Settings and back up the PDF folder separately. A restore saves a safety copy of current bookings first.
 
 **Booking exports:** PDF is the default, with CSV available in the format dropdown. The A4 portrait PDF uses black text and thin gray rules. Set a logo and report header under **Settings → Report appearance**. Use **Booked date** (default) or **Departure date** to filter the booking views and all exported rows.
 

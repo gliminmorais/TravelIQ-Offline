@@ -33,7 +33,10 @@ const booking = {
   version: 1,
   createdAt: '2026-11-17T04:30:00.000Z',
 };
-const ticket = () => ({ bytes: new Uint8Array(Buffer.from('%PDF-1.7\n%%EOF\n')).buffer });
+const ticket = (record = booking, marker = '') => ({
+  bookingId: record.id,
+  bytes: new Uint8Array(Buffer.from(`%PDF-1.7\n${marker}\n%%EOF\n`)).buffer,
+});
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'traveliq-test-'));
@@ -85,26 +88,66 @@ test('report branding survives database reopen and can be reset without touching
   assert.deepEqual(f.db.load(), [booking]);
 });
 
-test('ticket copies go to the chosen folder; deleting bookings leaves archived PDFs in place', (t) => {
+test('tickets use the booked date, the attached booking name, and a daily sequence', (t) => {
   const f = fixture(t);
-  assert.throws(() => f.db.save([booking], ticket()), /choose a folder/i);
+  const first = { ...booking, bookedOn: '2024-11-17' };
+  const second = { ...first, id: 'booking-2' };
+  const nextDay = { ...first, id: 'booking-3', bookedOn: '2024-11-18' };
+  const unrelated = { ...booking, id: 'booking-4', customerName: 'Another Traveller' };
+  const firstTicket = ticket(first, 'first original');
+  const secondTicket = ticket(second, 'second original');
+  const nextDayTicket = ticket(nextDay, 'next day original');
+  assert.throws(() => f.db.save([first], firstTicket), /choose a folder/i);
   f.db.setTicketFolder(f.disk);
-  f.db.save([booking], ticket());
-  const alternate = { ...booking, id: 'booking-2' };
-  f.db.save([booking, alternate], ticket());
-  const files = fs.readdirSync(f.disk, { recursive: true }).filter((p) => p.endsWith('.pdf'));
-  assert.equal(files.length, 2);
-  assert.notEqual(files[0], files[1]);
-  for (const name of files) {
-    assert.match(name.replaceAll('\\', '/'), /^\d{4}\/\d{2}\/ticket-[0-9a-f-]+\.pdf$/);
-    assert.deepEqual(fs.readFileSync(path.join(f.disk, name)), Buffer.from(ticket().bytes));
+  f.db.save([first, unrelated], firstTicket);
+  f.reopen().save([first, second, unrelated], secondTicket);
+  f.db.save([nextDay, first, second, unrelated], nextDayTicket);
+  const expected = [
+    ['2024/November/17/Example Traveller_1.pdf', firstTicket],
+    ['2024/November/17/Example Traveller_2.pdf', secondTicket],
+    ['2024/November/18/Example Traveller_1.pdf', nextDayTicket],
+  ];
+  const savedPdfs = () =>
+    fs
+      .readdirSync(f.disk, { recursive: true })
+      .filter((p) => p.endsWith('.pdf'))
+      .map((p) => p.split(path.sep).join('/'))
+      .sort();
+  assert.deepEqual(
+    savedPdfs(),
+    expected.map(([name]) => name),
+  );
+  for (const [name, original] of expected) {
+    assert.deepEqual(fs.readFileSync(path.join(f.disk, name)), Buffer.from(original.bytes));
   }
   f.db.save([]);
   assert.deepEqual(f.db.load(), []);
-  assert.equal(
-    fs.readdirSync(f.disk, { recursive: true }).filter((p) => p.endsWith('.pdf')).length,
-    2,
+  assert.deepEqual(
+    savedPdfs(),
+    expected.map(([name]) => name),
+    'deletion keeps the ticket copies',
   );
+});
+
+test('ticket filenames are safe on Windows and continue after previously saved numbers', (t) => {
+  const f = fixture(t);
+  const record = {
+    ...booking,
+    customerName: 'NUL.José/Lee',
+    bookedOn: '2024-01-03',
+  };
+  const dateFolder = path.join(f.disk, '2024', 'January', '03');
+  fs.mkdirSync(dateFolder, { recursive: true });
+  const existing = path.join(dateFolder, '_nul.josé_lee_4.PDF');
+  fs.writeFileSync(existing, 'existing ticket');
+  f.db.setTicketFolder(f.disk);
+  f.db.save([record], ticket(record));
+  assert.deepEqual(fs.readdirSync(dateFolder).sort(), [
+    '_NUL.José_Lee_5.pdf',
+    '_nul.josé_lee_4.PDF',
+  ]);
+  assert.equal(fs.readFileSync(existing, 'utf8'), 'existing ticket');
+  assert.deepEqual(f.db.load(), [record]);
 });
 
 test('missing or invalid ticket prevents saving that booking; other records remain usable', (t) => {
@@ -113,11 +156,19 @@ test('missing or invalid ticket prevents saving that booking; other records rema
   f.db.save([booking]);
   const alternate = { ...booking, id: 'booking-2' };
   assert.throws(
-    () => f.db.save([booking, alternate], { bytes: new Uint8Array([1, 2]).buffer }),
+    () =>
+      f.db.save([booking, alternate], {
+        ...ticket(alternate),
+        bytes: new Uint8Array([1, 2]).buffer,
+      }),
     /valid PDF/i,
   );
+  assert.throws(
+    () => f.db.save([booking, alternate], { ...ticket(alternate), bookingId: 'unknown' }),
+    /booking for this ticket PDF/i,
+  );
   fs.renameSync(f.disk, f.disk + '-unplugged');
-  assert.throws(() => f.db.save([booking, alternate], ticket()), /unavailable|writable/i);
+  assert.throws(() => f.db.save([booking, alternate], ticket(alternate)), /unavailable|writable/i);
   assert.deepEqual(f.db.load(), [booking]);
   f.db.save([booking, alternate]);
   assert.equal(f.db.load().length, 2);

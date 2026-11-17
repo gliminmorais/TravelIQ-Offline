@@ -173,9 +173,11 @@ export function Workspace() {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     localStorage.setItem('traveliq-theme', dark ? 'dark' : 'light');
   }, [dark]);
-  async function persist(next: Booking[], file?: File) {
+  async function persist(next: Booking[], attachment?: { file: File; bookingId: string }) {
     if (loadError || loading) throw new Error('Load the workspace before saving changes.');
-    const ticket = file ? { bytes: await file.arrayBuffer() } : undefined;
+    const ticket = attachment
+      ? { bookingId: attachment.bookingId, bytes: await attachment.file.arrayBuffer() }
+      : undefined;
     await desktop().save(next, ticket);
     setBookings(next);
   }
@@ -292,7 +294,8 @@ export function Workspace() {
         createdAt: old?.createdAt || new Date().toISOString(),
       };
     }
-    await persist(id ? bookings.map((b) => (b.id === id ? saved : b)) : [...bookings, saved], file);
+    const next = id ? bookings.map((b) => (b.id === id ? saved : b)) : [...bookings, saved];
+    await persist(next, file ? { file, bookingId: saved.id } : undefined);
     toast.success(
       file ? 'Booking and ticket PDF saved' : id ? 'Booking updated' : 'Booking created',
     );

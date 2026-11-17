@@ -7,6 +7,7 @@ const { businessLogo, reportHeader } = require('./branding.cjs');
 const BACKUP_TYPE = 'TravelIQ Offline backup';
 const MAX_BACKUP = 64 * 1024 * 1024;
 const MAX_PDF = 4 * 1024 * 1024;
+const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' });
 const text = (value, max, min = 0) =>
   typeof value === 'string' && value.length >= min && value.length <= max;
 const day = (value) =>
@@ -89,31 +90,67 @@ function isWithin(root, candidate) {
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-function writeAtomically(destination, bytes) {
+function discardFile(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* The file is gone or the disk is unavailable. */
+  }
+}
+
+function writeAtomically(destination, bytes, { newFile = false } = {}) {
   const temp = path.join(path.dirname(destination), `.traveliq-${randomUUID()}.tmp`);
-  let created = false;
+  let tempExists = false;
+  let reserved = false;
   try {
     const handle = fs.openSync(temp, 'wx', 0o600);
-    created = true;
+    tempExists = true;
     try {
       fs.writeFileSync(handle, bytes);
       fs.fsyncSync(handle);
     } finally {
       fs.closeSync(handle);
     }
-    fs.renameSync(temp, destination);
-  } finally {
-    if (created) {
-      try {
-        fs.unlinkSync(temp);
-      } catch {
-        /* already renamed or the disk was removed */
-      }
+    if (newFile) {
+      // Claim the filename after the temporary file is complete.
+      const reservation = fs.openSync(destination, 'wx', 0o600);
+      reserved = true;
+      fs.closeSync(reservation);
     }
+    fs.renameSync(temp, destination);
+    tempExists = false;
+    reserved = false;
+  } finally {
+    if (reserved) discardFile(destination);
+    if (tempExists) discardFile(temp);
   }
 }
 
-function copyTicket(folder, ticket) {
+function ticketStem(customerName) {
+  const name = customerName
+    .trim()
+    .replace(/[<>:"/\\|?*\p{Cc}]/gu, '_')
+    .replace(/[. ]+$/, '');
+  if (/^(?:con|prn|aux|nul|(?:com|lpt)[1-9¹²³]) *\./i.test(name)) return `_${name}`;
+  return name || 'Customer';
+}
+
+function nextTicketNumber(directory, stem) {
+  const prefix = `${stem.toLowerCase()}_`;
+  let last = 0n;
+  for (const filename of fs.readdirSync(directory)) {
+    const lower = filename.toLowerCase();
+    if (!lower.startsWith(prefix) || !lower.endsWith('.pdf')) continue;
+    const suffix = lower.slice(prefix.length, -4);
+    if (/^\d+$/.test(suffix)) {
+      const number = BigInt(suffix);
+      if (number > last) last = number;
+    }
+  }
+  return last + 1n;
+}
+
+function copyTicket(folder, ticket, booking) {
   if (!folder) throw Error('Choose a folder for ticket PDFs first, then try saving again.');
   if (!(ticket?.bytes instanceof ArrayBuffer) || ticket.bytes.byteLength > MAX_PDF) {
     throw Error('Choose a valid PDF no larger than 4 MB.');
@@ -124,9 +161,10 @@ function copyTicket(folder, ticket) {
     // The selected root must already exist. Do not recreate it if an external disk is absent.
     const root = fs.realpathSync(folder);
     if (!fs.statSync(root).isDirectory()) throw Error('Not a directory');
-    const now = new Date();
+    const [year, , bookedDay] = booking.bookedOn.split('-');
+    const month = monthName.format(new Date(booking.bookedOn));
     let dir = root;
-    for (const part of [String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0')]) {
+    for (const part of [year, month, bookedDay]) {
       const child = path.join(dir, part);
       try {
         fs.mkdirSync(child);
@@ -137,9 +175,16 @@ function copyTicket(folder, ticket) {
       if (!isWithin(root, dir) || !fs.statSync(dir).isDirectory())
         throw Error('Invalid archive subfolder');
     }
-    const destination = path.join(dir, `ticket-${randomUUID()}.pdf`);
-    writeAtomically(destination, bytes);
-    return destination;
+    const stem = ticketStem(booking.customerName);
+    for (let number = nextTicketNumber(dir, stem); ; number += 1n) {
+      const destination = path.join(dir, `${stem}_${number}.pdf`);
+      try {
+        writeAtomically(destination, bytes, { newFile: true });
+        return destination;
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+    }
   } catch (error) {
     throw Error(
       error.code === 'ENOSPC'
@@ -220,17 +265,16 @@ function createStorage(profile) {
     },
     save(bookings, ticket) {
       const rows = validateBookings(bookings);
-      const copied = ticket === undefined ? undefined : copyTicket(getTicketFolder(), ticket);
+      let copied;
+      if (ticket !== undefined) {
+        const booking = bookings.find((record) => record.id === ticket?.bookingId);
+        if (!booking) throw Error('Choose the booking for this ticket PDF before saving.');
+        copied = copyTicket(getTicketFolder(), ticket, booking);
+      }
       try {
         replace(bookings, rows);
       } catch (error) {
-        if (copied) {
-          try {
-            fs.unlinkSync(copied);
-          } catch {
-            /* disk removed */
-          }
-        }
+        if (copied) discardFile(copied);
         throw error;
       }
     },

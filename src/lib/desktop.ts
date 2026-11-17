@@ -1,7 +1,7 @@
 import type { Booking } from './model';
 import type { DateBasis } from './report-dates';
 
-type Ticket = { bytes: ArrayBuffer };
+type Ticket = { bookingId: string; bytes: ArrayBuffer };
 export type BrandingSettings = { reportHeader: string; logo: string };
 export const defaultBranding: BrandingSettings = {
   reportHeader: 'TRAVELIQ OFFLINE / REPORTS',
